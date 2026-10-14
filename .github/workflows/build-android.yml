@@ -14,16 +14,32 @@ jobs:
       - name: Download source code
         uses: actions/checkout@v4
 
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Set up NuGet
         uses: NuGet/setup-nuget@v2
 
       - name: Restore dependencies
-        run: nuget restore PKHeX.Mobile.sln
-        
+        shell: pwsh
+        run: |
+          nuget restore PKHeX.Mobile.sln
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "NuGet dependency restoration failed."
+          }
+
       - name: Install Android SDK Platform 30
         shell: pwsh
         run: |
           $sdk = "C:\Program Files (x86)\Android\android-sdk"
+
+          if (-not (Test-Path $sdk)) {
+            throw "Android SDK directory not found: $sdk"
+          }
 
           $manager = Get-ChildItem `
             -Path $sdk `
@@ -33,7 +49,7 @@ jobs:
             Select-Object -First 1 -ExpandProperty FullName
 
           if (-not $manager) {
-            throw "Android SDK Manager was not found."
+            throw "Android SDK Manager (sdkmanager.bat) was not found."
           }
 
           & $manager "--sdk_root=$sdk" "platforms;android-30"
@@ -49,20 +65,25 @@ jobs:
       - name: Build Android application
         shell: pwsh
         run: |
-          $project = Get-ChildItem -Recurse -Filter "PKHeX.Android.csproj" |
+          $project = Get-ChildItem `
+            -Recurse `
+            -Filter "PKHeX.Android.csproj" |
             Select-Object -First 1 -ExpandProperty FullName
 
           if (-not $project) {
             throw "PKHeX.Android.csproj was not found."
           }
 
-          $msbuild = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
-          if (-not (Test-Path $msbuild)) {
-            throw "Visual Studio Build Tools locator was not found."
+          if (-not (Test-Path $vswhere)) {
+            throw "Visual Studio locator (vswhere.exe) was not found."
           }
 
-          $vsPath = & $msbuild -latest -products "*" -property installationPath
+          $vsPath = & $vswhere `
+            -latest `
+            -products "*" `
+            -property installationPath
 
           if (-not $vsPath) {
             throw "Visual Studio installation was not found."
@@ -70,29 +91,44 @@ jobs:
 
           $msbuildExe = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
 
-          & $msbuildExe $project /t:PackageForAndroid /p:Configuration=Release /restore
+          if (-not (Test-Path $msbuildExe)) {
+            throw "MSBuild.exe was not found."
+          }
+
+          & $msbuildExe $project `
+            /t:PackageForAndroid `
+            /p:Configuration=Release `
+            /restore `
+            /verbosity:minimal
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Android build failed with exit code $LASTEXITCODE"
+            throw "Android build failed with exit code $LASTEXITCODE."
           }
 
       - name: Find generated APK
         id: apk
         shell: pwsh
         run: |
-          $apk = Get-ChildItem -Recurse -Filter "*.apk" |
-            Where-Object { $_.FullName -match '\\bin\\Release\\' } |
+          $apk = Get-ChildItem `
+            -Recurse `
+            -Filter "*.apk" |
+            Where-Object {
+              $_.FullName -match '[\\/]bin[\\/]Release[\\/]'
+            } |
             Select-Object -First 1
 
           if (-not $apk) {
-            throw "No APK was generated."
+            throw "No APK was generated. Check the build output."
           }
 
           "path=$($apk.FullName)" >> $env:GITHUB_OUTPUT
+
+          Write-Host "APK found: $($apk.FullName)"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: PKHeX-Mobile-Android
           path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
           retention-days: 7
