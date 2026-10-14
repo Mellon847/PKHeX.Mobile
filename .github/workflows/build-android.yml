@@ -1,0 +1,44 @@
+name: Build PKHeX.Mobile Android
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-android.yml"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Download source code
+        uses: actions/checkout@v4
+
+      - name: Select Xamarin.Android
+        shell: bash
+        run: |
+          "$VM_ASSETS/select-xamarin-sdk-v2.sh" \
+            --mono=6.10 \
+            --android=10.2
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "5.0.x"
+
+      - name: Restore dependencies
+        run: nuget restore PKHeX.Mobile.sln
+
+      - name: Build Android APK
+        run: |
+          msbuild PKHeX.Android/PKHeX.Android.csproj \
+            /t:PackageForAndroid \
+            /p:Configuration=Release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKHeX-Mobile-Android
+          path: PKHeX.Android/bin/Release/*.apk
+          if-no-files-found: error
+          retention-days: 7
