@@ -19,6 +19,32 @@ jobs:
 
       - name: Restore dependencies
         run: nuget restore PKHeX.Mobile.sln
+        
+      - name: Install Android SDK Platform 30
+        shell: pwsh
+        run: |
+          $sdk = "C:\Program Files (x86)\Android\android-sdk"
+
+          $manager = Get-ChildItem `
+            -Path $sdk `
+            -Filter "sdkmanager.bat" `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $manager) {
+            throw "Android SDK Manager was not found."
+          }
+
+          & $manager "--sdk_root=$sdk" "platforms;android-30"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install Android SDK Platform 30."
+          }
+
+          if (-not (Test-Path "$sdk\platforms\android-30\android.jar")) {
+            throw "Android SDK Platform 30 was not installed correctly."
+          }
 
       - name: Build Android application
         shell: pwsh
