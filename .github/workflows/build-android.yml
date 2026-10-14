@@ -8,37 +8,65 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: windows-2022
 
     steps:
       - name: Download source code
         uses: actions/checkout@v4
 
-      - name: Select Xamarin.Android
-        shell: bash
-        run: |
-          "$VM_ASSETS/select-xamarin-sdk-v2.sh" \
-            --mono=6.10 \
-            --android=10.2
-
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "5.0.x"
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
 
       - name: Restore dependencies
         run: nuget restore PKHeX.Mobile.sln
 
-      - name: Build Android APK
+      - name: Build Android application
+        shell: pwsh
         run: |
-          msbuild PKHeX.Android/PKHeX.Android.csproj \
-            /t:PackageForAndroid \
-            /p:Configuration=Release
+          $project = Get-ChildItem -Recurse -Filter "PKHeX.Android.csproj" |
+            Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $project) {
+            throw "PKHeX.Android.csproj was not found."
+          }
+
+          $msbuild = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+          if (-not (Test-Path $msbuild)) {
+            throw "Visual Studio Build Tools locator was not found."
+          }
+
+          $vsPath = & $msbuild -latest -products "*" -property installationPath
+
+          if (-not $vsPath) {
+            throw "Visual Studio installation was not found."
+          }
+
+          $msbuildExe = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+
+          & $msbuildExe $project /t:PackageForAndroid /p:Configuration=Release /restore
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android build failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Find generated APK
+        id: apk
+        shell: pwsh
+        run: |
+          $apk = Get-ChildItem -Recurse -Filter "*.apk" |
+            Where-Object { $_.FullName -match '\\bin\\Release\\' } |
+            Select-Object -First 1
+
+          if (-not $apk) {
+            throw "No APK was generated."
+          }
+
+          "path=$($apk.FullName)" >> $env:GITHUB_OUTPUT
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: PKHeX-Mobile-Android
-          path: PKHeX.Android/bin/Release/*.apk
-          if-no-files-found: error
+          path: ${{ steps.apk.outputs.path }}
           retention-days: 7
